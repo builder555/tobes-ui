@@ -1,0 +1,30 @@
+[tools]
+# Manages the Rust toolchain. Run `mise install` once to set up.
+# If you already have cargo from Nix/system, you can skip `mise install`
+# and run `cargo` directly — the tasks below are just convenience wrappers.
+rust = "latest"
+
+[tasks.demo]
+description = "Run with simulated spectrum (no hardware needed)"
+run         = "cargo run -- --demo"
+
+[tasks.ports]
+description = "List available serial ports"
+run         = "cargo run -- --list-ports"
+
+[tasks.run]
+description = "Build & run (auto-detects the first available serial port)"
+run         = "cargo run --release"
+
+[tasks.build]
+description = "Build optimised binary for the current platform"
+run         = "cargo build --release"
+
+# Cross-compile for Raspberry Pi (aarch64 / 64-bit Pi OS).
+# Prerequisites:
+#   rustup target add aarch64-unknown-linux-gnu
+#   brew install FiloSottile/musl-cross/musl-cross   # on macOS
+# Then set CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-musl-gcc
+[tasks.build-pi]
+description = "Cross-compile release binary for aarch64 Raspberry Pi"
+run         = "cargo build --release --target aarch64-unknown-linux-gnu"

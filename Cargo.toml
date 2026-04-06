@@ -1,0 +1,19 @@
+[package]
+name = "tobes-rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tobes-rs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow     = "1"
+clap       = { version = "4", features = ["derive"] }
+eframe     = "0.28"
+egui       = "0.28"
+egui_plot  = "0.28"
+serialport = "4"
+
+[profile.release]
+opt-level = 3
