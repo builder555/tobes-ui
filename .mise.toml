@@ -16,6 +16,10 @@ run         = "cargo run -- --list-ports"
 description = "Build & run (auto-detects the first available serial port)"
 run         = "cargo run --release"
 
+[tasks.test]
+description = "Run tests"
+run         = "cargo test"
+
 [tasks.build]
 description = "Build optimised binary for the current platform"
 run         = "cargo build --release"
