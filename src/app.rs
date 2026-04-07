@@ -94,15 +94,18 @@ impl eframe::App for SpectrumApp {
                     spec.wavelengths.iter().zip(spec.intensities.iter())
                 {
                     let color = nm_to_color(wl);
+                    // Bars are made slightly wider than 1 nm and given a
+                    // matching-colour stroke so adjacent bars blend seamlessly
+                    // at any zoom level without visible gaps.
                     plot_ui.polygon(
                         Polygon::new(PlotPoints::new(vec![
-                            [wl as f64 - 0.5, 0.0],
-                            [wl as f64 - 0.5, intensity as f64],
-                            [wl as f64 + 0.5, intensity as f64],
-                            [wl as f64 + 0.5, 0.0],
+                            [wl as f64 - 0.55, 0.0],
+                            [wl as f64 - 0.55, intensity as f64],
+                            [wl as f64 + 0.55, intensity as f64],
+                            [wl as f64 + 0.55, 0.0],
                         ]))
                         .fill_color(color)
-                        .stroke(Stroke::NONE),
+                        .stroke(Stroke::new(0.5, color)),
                     );
                 }
             });
