@@ -1,9 +1,11 @@
 mod app;
 mod spectrometer;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
-use spectrometer::Spectrum;
+use serde::Deserialize;
+use spectrometer::{ExposureStatus, Spectrum};
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
 
@@ -15,7 +17,12 @@ struct Args {
     #[arg(short, long)]
     port: Option<String>,
 
-    /// Run with simulated data — no hardware required
+    /// Load a spectrum from a JSON file and display it (no hardware required).
+    /// The file must follow the tobes-ui JSON export format.
+    #[arg(short, long)]
+    file: Option<String>,
+
+    /// Run with synthetic data — no hardware or file required
     #[arg(long)]
     demo: bool,
 
@@ -42,7 +49,10 @@ fn main() -> Result<()> {
 
     let (tx, rx) = mpsc::channel::<Spectrum>();
 
-    if args.demo {
+    if let Some(path) = args.file {
+        let spectrum = load_json(&path)?;
+        thread::spawn(move || file_loop(spectrum, tx));
+    } else if args.demo {
         thread::spawn(move || demo_loop(tx));
     } else {
         let port_path = match args.port {
@@ -55,7 +65,7 @@ fn main() -> Result<()> {
                         p.port_name
                     }
                     None => {
-                        eprintln!("No serial ports found. Use --port <path> or --demo.");
+                        eprintln!("No serial ports found. Use --port <path>, --file <path>, or --demo.");
                         std::process::exit(1);
                     }
                 }
@@ -87,6 +97,81 @@ fn main() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// JSON file loading
+// ---------------------------------------------------------------------------
+
+/// Mirrors the subset of fields written by tobes-ui's Spectrum.to_json().
+#[derive(Deserialize)]
+struct SpectrumJson {
+    #[serde(default)]
+    status: String,
+    time: f32,
+    /// wavelength (nm, as string key) → intensity
+    spd: HashMap<String, f64>,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+fn load_json(path: &str) -> Result<Spectrum> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Cannot read {path}"))?;
+    let data: SpectrumJson = serde_json::from_str(&content)
+        .with_context(|| format!("Cannot parse {path} as spectrum JSON"))?;
+
+    // Sort by wavelength so the display is left-to-right.
+    let mut pairs: Vec<(u16, f32)> = data
+        .spd
+        .iter()
+        .filter_map(|(k, &v)| k.parse::<u16>().ok().map(|wl| (wl, v as f32)))
+        .collect();
+    pairs.sort_by_key(|&(wl, _)| wl);
+
+    let wavelengths: Vec<f32> = pairs.iter().map(|&(wl, _)| wl as f32).collect();
+    let intensities: Vec<f32> = pairs.iter().map(|&(_, i)| i).collect();
+
+    let start = pairs.first().map(|&(wl, _)| wl).unwrap_or(340);
+    let end   = pairs.last().map(|&(wl, _)| wl).unwrap_or(1000);
+
+    let status = match data.status.to_lowercase().as_str() {
+        "over"  => ExposureStatus::Over,
+        "under" => ExposureStatus::Under,
+        _       => ExposureStatus::Normal,
+    };
+
+    // Use the file name (without extension) as a label shown in the toolbar.
+    let label = data.name.unwrap_or_else(|| {
+        std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(path)
+            .to_string()
+    });
+    eprintln!("Loaded: {label}  ({} points, {start}–{end} nm)", wavelengths.len());
+
+    Ok(Spectrum {
+        status,
+        exposure_time_ms: data.time,
+        wavelengths,
+        intensities,
+        wavelength_start: start,
+        wavelength_end:   end,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// File replay loop — sends the same spectrum at display rate
+// ---------------------------------------------------------------------------
+
+fn file_loop(spectrum: Spectrum, tx: mpsc::Sender<Spectrum>) {
+    loop {
+        if tx.send(spectrum.clone()).is_err() {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Real hardware acquisition loop
 // ---------------------------------------------------------------------------
 
@@ -98,7 +183,7 @@ fn spectrometer_loop(port: String, tx: mpsc::Sender<Spectrum>) -> Result<()> {
         match spec.read_spectrum() {
             Ok(s) => {
                 if tx.send(s).is_err() {
-                    break; // GUI has exited
+                    break;
                 }
             }
             Err(e) => {
@@ -113,7 +198,7 @@ fn spectrometer_loop(port: String, tx: mpsc::Sender<Spectrum>) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Demo loop — generates a fake halogen-like spectrum with a slow drift
+// Demo loop — synthetic blackbody-ish curve with slow drift
 // ---------------------------------------------------------------------------
 
 fn demo_loop(tx: mpsc::Sender<Spectrum>) {
@@ -128,16 +213,14 @@ fn demo_loop(tx: mpsc::Sender<Spectrum>) {
         let intensities: Vec<f32> = wavelengths
             .iter()
             .map(|&wl| {
-                // Smooth blackbody-ish curve peaking around 700 nm
-                let bb = (-((wl - 700.0) / 220.0).powi(2)).exp();
-                // Gentle oscillation for visual feedback
+                let bb   = (-((wl - 700.0) / 220.0).powi(2)).exp();
                 let wave = (phase + (wl - 340.0) / 100.0).sin() * 0.04;
                 (bb * 0.05 + wave).max(0.0)
             })
             .collect();
 
         let spectrum = Spectrum {
-            status:           spectrometer::ExposureStatus::Normal,
+            status:           ExposureStatus::Normal,
             exposure_time_ms: 100.0,
             wavelengths,
             intensities,
